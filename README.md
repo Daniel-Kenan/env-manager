@@ -27,24 +27,14 @@
 
 1.  **Clone the repository**:
 
-   
-
     `git clone https://github.com/daniel-kenan/env-manager.git
     cd env-manager`
 
 2.  **Install dependencies**:
-
-   
-
     
-
     `pip install -r requirements.txt`
 
 3.  **Run the application**:
-
-   
-
-    
 
     `python env_manager.py`
 
@@ -66,10 +56,6 @@ Upon running the application, you'll see a menu with options to create a new pro
 
 🚀 Example Interaction
 ----------------------
-
-
-
-
 
 ```bash
 --- .env Manager ---

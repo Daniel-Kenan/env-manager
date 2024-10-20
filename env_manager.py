@@ -9,46 +9,37 @@ from getpass import getpass
 from colorama import Fore, Style
 import base64
 import secrets
+from InquirerPy import inquirer  # Import InquirerPy for interactive prompts
 
 # Ensure colorama works correctly on Windows
 import colorama
 colorama.init()
 
-PROJECTS_FILE = 'projects.json'
 PROJECTS_DIR = 'projects'
 SALT_LENGTH = 16
 
 # Supported .env file extensions
 ENV_EXTENSIONS = ['.env', '.env.local', '.env.development', '.env.production']
 
-def load_projects():
-    """Load projects from the JSON file."""
-    if os.path.exists(PROJECTS_FILE):
-        with open(PROJECTS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_projects(projects):
-    """Save projects to the JSON file."""
-    with open(PROJECTS_FILE, 'w') as f:
-        json.dump(projects, f, indent=4)
-
 def ensure_projects_directory():
     """Create a projects directory if it doesn't exist."""
     if not os.path.exists(PROJECTS_DIR):
         os.makedirs(PROJECTS_DIR)
 
-def list_projects(projects):
-    """List all available projects."""
-    return [name for name in projects.keys()]
+def list_projects():
+    """List all available projects from the filesystem."""
+    return [name for name in os.listdir(PROJECTS_DIR) if os.path.isdir(os.path.join(PROJECTS_DIR, name))]
 
-def create_project(project_name, project_path, projects):
+def create_project(project_name, project_path):
     """Create a new project directory and copy all .env files."""
-    if project_name in projects:
-        print(f"{Fore.RED}Project '{project_name}' already exists.{Style.RESET_ALL}")
-        return
-
     project_dir = os.path.join(PROJECTS_DIR, project_name)
+    if os.path.exists(project_dir):
+        print(f"{Fore.YELLOW}Warning: Project '{project_name}' already exists. Overwriting it may lead to loss of data.{Style.RESET_ALL}")
+        overwrite_choice = input(f"{Fore.YELLOW}Do you want to continue? (Y/n) [{Fore.GREEN}Y{Fore.YELLOW}]: {Style.RESET_ALL}").strip().lower() or 'y'
+        if overwrite_choice != 'y':
+            print(f"{Fore.RED}Aborted project creation.{Style.RESET_ALL}")
+            return
+
     os.makedirs(project_dir, exist_ok=True)
 
     print(f"{Fore.CYAN}Copying .env files from '{project_path}'...{Style.RESET_ALL}")
@@ -64,8 +55,10 @@ def create_project(project_name, project_path, projects):
     
     if not files_copied:
         print(f"{Fore.RED}No .env file found at '{project_path}' with supported extensions: {', '.join(ENV_EXTENSIONS)}.{Style.RESET_ALL}")
+        # Clean up the created directory and exit
+        shutil.rmtree(project_dir)
         return
-    
+
     # Encrypt files if user chooses to do so
     encrypt_choice = input(f"{Fore.YELLOW}Do you want to encrypt the copied files? (Y/n) [{Fore.GREEN}Y{Fore.YELLOW}]: {Style.RESET_ALL}").strip().lower() or 'y'
     if encrypt_choice == 'y':
@@ -74,14 +67,15 @@ def create_project(project_name, project_path, projects):
         confirm_password = getpass(f"{Fore.YELLOW}Confirm the password: {Style.RESET_ALL}")
 
         if password != confirm_password:
-            print(f"{Fore.RED}Passwords do not match. Aborting encryption.{Style.RESET_ALL}")
+            print(f"{Fore.RED}Passwords do not match. Aborting encryption and cleaning up.{Style.RESET_ALL}")
+            shutil.rmtree(project_dir)  # Clean up on password mismatch
             return
 
         for ext in ENV_EXTENSIONS:
             copied_file_path = os.path.join(project_dir, ext)
             if os.path.exists(copied_file_path):
                 encrypt_file(copied_file_path, password)
-        
+
         # Prompt for deletion of unencrypted files
         delete_choice = input(f"{Fore.YELLOW}Do you want to delete the unencrypted files? (Y/n) [{Fore.GREEN}Y{Fore.YELLOW}]: {Style.RESET_ALL}").strip().lower() or 'y'
         if delete_choice == 'y':
@@ -90,9 +84,6 @@ def create_project(project_name, project_path, projects):
                 if os.path.exists(copied_file_path):
                     os.remove(copied_file_path)
                     print(f"{Fore.GREEN}Deleted unencrypted file '{copied_file_path}'.{Style.RESET_ALL}")
-
-    projects[project_name] = project_path
-    save_projects(projects)
 
 def encrypt_file(file_path, password):
     """Encrypt a file using a provided password."""
@@ -145,41 +136,100 @@ def decrypt_file(file_path, password):
 
     print(f"{Fore.GREEN}File '{file_path}' decrypted successfully as '{decrypted_file_path}'.{Style.RESET_ALL}")
 
+def delete_project(project_name):
+    """Delete a project and its directory."""
+    project_dir = os.path.join(PROJECTS_DIR, project_name)
+    if os.path.exists(project_dir):
+        shutil.rmtree(project_dir)
+        print(f"{Fore.GREEN}Deleted project '{project_name}' and its directory.{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.RED}Project '{project_name}' does not exist.{Style.RESET_ALL}")
+
+def view_encrypted_files(project_name):
+    """Display all encrypted .env files for the selected project."""
+    project_dir = os.path.join(PROJECTS_DIR, project_name)
+    encrypted_files = [f for f in os.listdir(project_dir) if f.endswith('.encrypted')]
+    
+    if encrypted_files:
+        print(f"{Fore.CYAN}Encrypted files for project '{project_name}':{Style.RESET_ALL}")
+        for file in encrypted_files:
+            print(f" - {file}")
+    else:
+        print(f"{Fore.RED}No encrypted files found for project '{project_name}'.{Style.RESET_ALL}")
+
 def display_menu():
     """Display the main menu."""
-    print(f"\n{Fore.CYAN}--- .env Manager ---{Style.RESET_ALL}")
-    print("1. Create a new project and copy .env")
-    print("2. Decrypt an encrypted .env file")
-    print("3. Exit")
+    options = [
+        "Create a new project and copy .env",
+        "Decrypt an encrypted .env file",
+        "View encrypted files in a project",
+        "Delete a project",
+        "Exit"
+    ]
+    choice = inquirer.select(
+        message="--- .env Manager ---",
+        choices=options
+    ).execute()
+    return choice
+
+def choose_project():
+    """Allow the user to choose a project from a list using arrow keys."""
+    project_list = list_projects()
+    if not project_list:
+        print(f"{Fore.RED}No projects available.{Style.RESET_ALL}")
+        return None
+    
+    project_name = inquirer.select(
+        message="Choose a project:",
+        choices=project_list
+    ).execute()
+    
+    return project_name
 
 def main():
     ensure_projects_directory()
-    projects = load_projects()
 
     while True:
-        display_menu()
+        choice = display_menu()
 
-        choice = input(f"{Fore.YELLOW}Choose an option (1-3): {Style.RESET_ALL}")
-        
-        if choice == '1':
+        if choice == "Create a new project and copy .env":
             project_name = input(f"{Fore.YELLOW}Enter new project name: {Style.RESET_ALL}")
             project_path = input(f"{Fore.YELLOW}Enter the full path of the project (where the .env files are located): {Style.RESET_ALL}")
-            create_project(project_name, project_path, projects)
-        
-        elif choice == '2':
-            file_to_decrypt = input(f"{Fore.YELLOW}Enter the path of the encrypted .env file to decrypt: {Style.RESET_ALL}")
-            if os.path.exists(file_to_decrypt):
-                password = getpass(f"{Fore.YELLOW}Enter the password to decrypt the file: {Style.RESET_ALL}")
-                decrypt_file(file_to_decrypt, password)
-            else:
-                print(f"{Fore.RED}File not found: {file_to_decrypt}{Style.RESET_ALL}")
-        
-        elif choice == '3':
+            create_project(project_name, project_path)
+
+        elif choice == "Decrypt an encrypted .env file":
+            project_name = choose_project()
+            if project_name:
+                encrypted_files_found = False
+                for ext in ENV_EXTENSIONS:
+                    file_to_decrypt = os.path.join(PROJECTS_DIR, project_name, ext + '.encrypted')
+                    if os.path.exists(file_to_decrypt):
+                        encrypted_files_found = True
+                        break
+
+                if not encrypted_files_found:
+                    print(f"{Fore.RED}No encrypted files found in project '{project_name}'.{Style.RESET_ALL}")
+                    continue
+
+                password = getpass(f"{Fore.YELLOW}Enter the password to decrypt: {Style.RESET_ALL}")
+                for ext in ENV_EXTENSIONS:
+                    file_to_decrypt = os.path.join(PROJECTS_DIR, project_name, ext + '.encrypted')
+                    if os.path.exists(file_to_decrypt):
+                        decrypt_file(file_to_decrypt, password)
+
+        elif choice == "View encrypted files in a project":
+            project_name = choose_project()
+            if project_name:
+                view_encrypted_files(project_name)
+
+        elif choice == "Delete a project":
+            project_name = choose_project()
+            if project_name:
+                delete_project(project_name)
+
+        elif choice == "Exit":
             print(f"{Fore.CYAN}Exiting...{Style.RESET_ALL}")
             break
-        
-        else:
-            print(f"{Fore.RED}Invalid choice. Please try again.{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
