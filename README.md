@@ -15,6 +15,8 @@
 -   💾 **Project Management**: Keep track of multiple projects and their respective `.env` files.
 -   📂 **Environment File Support**: Supports multiple environment file extensions (`.env`, `.env.local`, etc.).
 
+![Preview Logo](./images/markdown.png)
+
 📦 Requirements
 ---------------
 
