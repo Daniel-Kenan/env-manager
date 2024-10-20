@@ -1,5 +1,7 @@
 import os
 import shutil
+import zipfile
+import tarfile
 import json
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
@@ -157,60 +159,137 @@ def view_encrypted_files(project_name):
     else:
         print(f"{Fore.RED}No encrypted files found for project '{project_name}'.{Style.RESET_ALL}")
 
+def compress_projects():
+    """Compress the projects directory into a specified format."""
+    compression_choice = inquirer.select(
+        message="Choose a compression format:",
+        choices=["ZIP", "TAR"],
+    ).execute()
+
+    misleading_extension = inquirer.text(
+        message="Enter a misleading file extension (e.g., .txt, .docx):",
+        default=".hidden"
+    ).execute()
+
+    compressed_filename = os.path.join(os.getcwd(), f"projects.{misleading_extension}")
+
+    print(f"{Fore.YELLOW}This tool will compress the projects folder. Make sure to upload the compressed file to the cloud.{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}The compressed file is safe to store and share.{Style.RESET_ALL}")
+
+    if compression_choice == "ZIP":
+        with zipfile.ZipFile(compressed_filename, 'w') as zipf:
+            for root, _, files in os.walk(PROJECTS_DIR):
+                for file in files:
+                    zipf.write(os.path.join(root, file), os.path.relpath(os.path.join(root, file), PROJECTS_DIR))
+        print(f"{Fore.GREEN}Projects folder compressed successfully to '{compressed_filename}'.{Style.RESET_ALL}")
+
+    elif compression_choice == "TAR":
+        with tarfile.open(compressed_filename, 'w:gz') as tarf:
+            tarf.add(PROJECTS_DIR, arcname=os.path.basename(PROJECTS_DIR))
+        print(f"{Fore.GREEN}Projects folder compressed successfully to '{compressed_filename}'.{Style.RESET_ALL}")
+
+def import_projects():
+    """Import projects from a compressed file with retry logic for misleading extensions."""
+    compressed_file_path = inquirer.text(message="Enter the path of the compressed file to import:").execute()
+
+    if not os.path.exists(compressed_file_path):
+        print(f"{Fore.RED}The specified file does not exist.{Style.RESET_ALL}")
+        return
+
+    # Try to extract directly first
+    def try_extract(path, ext):
+        try:
+            if ext == '.zip':
+                with zipfile.ZipFile(path, 'r') as zipf:
+                    # Extract to a temp directory first
+                    temp_dir = os.path.join(PROJECTS_DIR, 'temp')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    zipf.extractall(temp_dir)
+                    
+                    # Move files from the temp directory to PROJECTS_DIR, avoiding nested folders
+                    for item in os.listdir(temp_dir):
+                        source = os.path.join(temp_dir, item)
+                        destination = os.path.join(PROJECTS_DIR, item)
+                        shutil.move(source, destination)
+
+                    # Cleanup the temp directory
+                    shutil.rmtree(temp_dir)
+                    
+                print(f"{Fore.GREEN}Projects imported successfully from '{path}' as ZIP.{Style.RESET_ALL}")
+                return True
+            
+            elif ext == '.tar.gz' or ext == '.tgz':
+                with tarfile.open(path, 'r:gz') as tarf:
+                    temp_dir = os.path.join(PROJECTS_DIR, 'temp')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    tarf.extractall(temp_dir)
+
+                    for item in os.listdir(temp_dir):
+                        source = os.path.join(temp_dir, item)
+                        destination = os.path.join(PROJECTS_DIR, item)
+                        shutil.move(source, destination)
+
+                    shutil.rmtree(temp_dir)
+
+                print(f"{Fore.GREEN}Projects imported successfully from '{path}' as TAR.{Style.RESET_ALL}")
+                return True
+
+        except Exception as e:
+            print(f"{Fore.YELLOW}Failed to extract '{path}': {e}{Style.RESET_ALL}")
+        return False
+
+
+    # First attempt: Try extracting the file as is (even with misleading extension)
+    if try_extract(compressed_file_path, '.zip') or try_extract(compressed_file_path, '.tar.gz'):
+        return
+
+    # Attempt to guess the correct format by stripping the misleading extension and retrying
+    base_path = os.path.splitext(compressed_file_path)[0]
+    
+    if try_extract(base_path + '.zip', '.zip') or try_extract(base_path + '.tar.gz', '.tar.gz'):
+        return
+
+    print(f"{Fore.RED}All extraction attempts failed. Please check the file format and try again.{Style.RESET_ALL}")
+
+
+ 
+def choose_project():
+    """Prompt the user to select a project from the list."""
+    projects = list_projects()
+    if not projects:
+        print(f"{Fore.RED}No projects available.{Style.RESET_ALL}")
+        return None
+    
+    return inquirer.select(message="Select a project:", choices=projects).execute()
+
 def display_menu():
-    """Display the main menu."""
+    """Display the main menu and get user choice."""
     options = [
         "Create a new project and copy .env",
         "Decrypt an encrypted .env file",
         "View encrypted files in a project",
         "Delete a project",
+        "Compress projects folder for cloud upload",
+        "Import projects from compressed file",
         "Exit"
     ]
-    choice = inquirer.select(
-        message="--- .env Manager ---",
-        choices=options
-    ).execute()
-    return choice
-
-def choose_project():
-    """Allow the user to choose a project from a list using arrow keys."""
-    project_list = list_projects()
-    if not project_list:
-        print(f"{Fore.RED}No projects available.{Style.RESET_ALL}")
-        return None
-    
-    project_name = inquirer.select(
-        message="Choose a project:",
-        choices=project_list
-    ).execute()
-    
-    return project_name
+    return inquirer.select("Select an option:", options).execute()
 
 def main():
+    """Main function to run the script."""
     ensure_projects_directory()
 
     while True:
         choice = display_menu()
-
+        
         if choice == "Create a new project and copy .env":
-            project_name = input(f"{Fore.YELLOW}Enter new project name: {Style.RESET_ALL}")
-            project_path = input(f"{Fore.YELLOW}Enter the full path of the project (where the .env files are located): {Style.RESET_ALL}")
+            project_name = inquirer.text(message="Enter new project name:").execute()
+            project_path = inquirer.text(message="Enter the full path of the project (where the .env files are located):").execute()
             create_project(project_name, project_path)
 
         elif choice == "Decrypt an encrypted .env file":
             project_name = choose_project()
             if project_name:
-                encrypted_files_found = False
-                for ext in ENV_EXTENSIONS:
-                    file_to_decrypt = os.path.join(PROJECTS_DIR, project_name, ext + '.encrypted')
-                    if os.path.exists(file_to_decrypt):
-                        encrypted_files_found = True
-                        break
-
-                if not encrypted_files_found:
-                    print(f"{Fore.RED}No encrypted files found in project '{project_name}'.{Style.RESET_ALL}")
-                    continue
-
                 password = getpass(f"{Fore.YELLOW}Enter the password to decrypt: {Style.RESET_ALL}")
                 for ext in ENV_EXTENSIONS:
                     file_to_decrypt = os.path.join(PROJECTS_DIR, project_name, ext + '.encrypted')
@@ -227,9 +306,16 @@ def main():
             if project_name:
                 delete_project(project_name)
 
+        elif choice == "Compress projects folder for cloud upload":
+            compress_projects()
+
+        elif choice == "Import projects from compressed file":
+            import_projects()
+
         elif choice == "Exit":
             print(f"{Fore.CYAN}Exiting...{Style.RESET_ALL}")
             break
+
 
 if __name__ == "__main__":
     main()
